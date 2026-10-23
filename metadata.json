@@ -1,0 +1,6 @@
+{
+  "name": "PortVessel TOS - Sistem Operasi Terminal Peti Kemas",
+  "description": "Sistem Operasi Terminal Peti Kemas (TOS) komprehensif untuk pemantauan performa kapal real-time, manajemen master data, transaksi kontainer, dan analitik operasional.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
