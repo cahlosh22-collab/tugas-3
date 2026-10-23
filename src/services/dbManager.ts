@@ -10,8 +10,22 @@ import {
   User,
 } from '../types/tos.ts';
 import { createClient } from '@supabase/supabase-js';
-import { db as firestoreDb, testFirestoreConnection, firebaseConfig } from '../lib/firebase.ts';
-import { collection, doc, setDoc, getDocs } from 'firebase/firestore';
+import {
+  db as firestoreDb,
+  testFirestoreConnection,
+  firebaseConfig,
+  OperationType,
+  handleFirestoreError,
+} from '../lib/firebase.ts';
+import {
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  getDocs,
+  Unsubscribe,
+} from 'firebase/firestore';
 
 const STORAGE_KEY_TOS = 'portvessel_tos_database_v1';
 const STORAGE_KEY_CONFIG = 'portvessel_tos_db_config_v1';
@@ -527,12 +541,14 @@ export class TerminalDbManager {
   private config: DatabaseConfig = defaultDatabaseConfig;
   private currentUser: User | null = null;
   private listeners: (() => void)[] = [];
+  private firestoreUnsubscribers: Unsubscribe[] = [];
 
   constructor() {
-    this.loadState();
+    this.loadLocalState();
+    this.setupFirestoreSubscriptions();
   }
 
-  private loadState() {
+  private loadLocalState() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_TOS);
       if (stored) {
@@ -552,7 +568,7 @@ export class TerminalDbManager {
         this.containers = [...initialContainers];
         this.gateTransactions = [...initialGateTransactions];
         this.logs = [...initialLogs];
-        this.saveState();
+        this.saveLocalState();
       }
 
       const storedConfig = localStorage.getItem(STORAGE_KEY_CONFIG);
@@ -564,20 +580,19 @@ export class TerminalDbManager {
       if (storedAuth) {
         this.currentUser = JSON.parse(storedAuth);
       } else {
-        // Set default authenticated admin for smooth initial experience
         this.currentUser = {
           id: 'usr-001',
           username: 'admin',
           email: 'admin@terminal.id',
           fullName: 'Budi Santoso, S.T., M.Mar.',
           role: 'super_admin',
-          department: 'Terminal Operations Command',
+          department: 'Operations Command Center',
           lastLogin: new Date().toISOString(),
         };
         localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(this.currentUser));
       }
     } catch (e) {
-      console.warn('Error loading TOS state from localStorage', e);
+      console.warn('Error loading local state', e);
       this.vessels = [...initialVessels];
       this.berths = [...initialBerths];
       this.yardBlocks = [...initialYardBlocks];
@@ -588,7 +603,7 @@ export class TerminalDbManager {
     }
   }
 
-  private saveState() {
+  private saveLocalState() {
     try {
       const payload = {
         vessels: this.vessels,
@@ -602,9 +617,180 @@ export class TerminalDbManager {
       localStorage.setItem(STORAGE_KEY_TOS, JSON.stringify(payload));
       localStorage.setItem(STORAGE_KEY_CONFIG, JSON.stringify(this.config));
     } catch (e) {
-      console.error('Error saving TOS state', e);
+      console.error('Error saving local TOS state', e);
     }
     this.notify();
+  }
+
+  // --- Real-time Firestore Subscriptions & Auto-Seeding ---
+  private setupFirestoreSubscriptions() {
+    try {
+      // 1. Vessels listener
+      const unsubVessels = onSnapshot(
+        collection(firestoreDb, 'vessels'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: Vessel[] = [];
+            snapshot.forEach((docSnap) => list.push(docSnap.data() as Vessel));
+            if (list.length > 0) {
+              this.vessels = list;
+              this.saveLocalState();
+            }
+          } else {
+            // Seed vessels
+            this.seedCollection('vessels', initialVessels);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'vessels')
+      );
+      this.firestoreUnsubscribers.push(unsubVessels);
+
+      // 2. Berths listener
+      const unsubBerths = onSnapshot(
+        collection(firestoreDb, 'berths'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: Berth[] = [];
+            snapshot.forEach((docSnap) => list.push(docSnap.data() as Berth));
+            if (list.length > 0) {
+              this.berths = list;
+              this.saveLocalState();
+            }
+          } else {
+            this.seedCollection('berths', initialBerths);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'berths')
+      );
+      this.firestoreUnsubscribers.push(unsubBerths);
+
+      // 3. YardBlocks listener
+      const unsubYard = onSnapshot(
+        collection(firestoreDb, 'yardBlocks'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: YardBlock[] = [];
+            snapshot.forEach((docSnap) => list.push(docSnap.data() as YardBlock));
+            if (list.length > 0) {
+              this.yardBlocks = list;
+              this.saveLocalState();
+            }
+          } else {
+            this.seedCollection('yardBlocks', initialYardBlocks);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'yardBlocks')
+      );
+      this.firestoreUnsubscribers.push(unsubYard);
+
+      // 4. Schedules listener
+      const unsubSchedules = onSnapshot(
+        collection(firestoreDb, 'schedules'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: VesselSchedule[] = [];
+            snapshot.forEach((docSnap) => list.push(docSnap.data() as VesselSchedule));
+            if (list.length > 0) {
+              this.schedules = list;
+              this.saveLocalState();
+            }
+          } else {
+            this.seedCollection('schedules', initialSchedules);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'schedules')
+      );
+      this.firestoreUnsubscribers.push(unsubSchedules);
+
+      // 5. Containers listener
+      const unsubContainers = onSnapshot(
+        collection(firestoreDb, 'containers'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: Container[] = [];
+            snapshot.forEach((docSnap) => list.push(docSnap.data() as Container));
+            if (list.length > 0) {
+              this.containers = list;
+              this.saveLocalState();
+            }
+          } else {
+            this.seedCollection('containers', initialContainers);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'containers')
+      );
+      this.firestoreUnsubscribers.push(unsubContainers);
+
+      // 6. Gate Transactions listener
+      const unsubGate = onSnapshot(
+        collection(firestoreDb, 'gateTransactions'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: GateTransaction[] = [];
+            snapshot.forEach((docSnap) => list.push(docSnap.data() as GateTransaction));
+            if (list.length > 0) {
+              this.gateTransactions = list;
+              this.saveLocalState();
+            }
+          } else {
+            this.seedCollection('gateTransactions', initialGateTransactions);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'gateTransactions')
+      );
+      this.firestoreUnsubscribers.push(unsubGate);
+
+      // 7. Logs listener
+      const unsubLogs = onSnapshot(
+        collection(firestoreDb, 'logs'),
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list: OperationalLog[] = [];
+            snapshot.forEach((docSnap) => list.push(docSnap.data() as OperationalLog));
+            if (list.length > 0) {
+              this.logs = list.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 50);
+              this.saveLocalState();
+            }
+          } else {
+            this.seedCollection('logs', initialLogs);
+          }
+        },
+        (error) => handleFirestoreError(error, OperationType.LIST, 'logs')
+      );
+      this.firestoreUnsubscribers.push(unsubLogs);
+
+      this.config.firebase.connected = true;
+      this.saveLocalState();
+    } catch (err) {
+      console.warn('Error setting up Firestore subscriptions', err);
+    }
+  }
+
+  private async seedCollection(colName: string, items: any[]) {
+    try {
+      for (const item of items) {
+        await setDoc(doc(firestoreDb, colName, item.id), item, { merge: true });
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, colName);
+    }
+  }
+
+  // --- Real Firestore Async Document Mutations ---
+  private async writeFirestoreDoc(colName: string, id: string, data: any) {
+    try {
+      await setDoc(doc(firestoreDb, colName, id), data, { merge: true });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `${colName}/${id}`);
+    }
+  }
+
+  private async deleteFirestoreDoc(colName: string, id: string) {
+    try {
+      await deleteDoc(doc(firestoreDb, colName, id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `${colName}/${id}`);
+    }
   }
 
   public subscribe(listener: () => void) {
@@ -624,7 +810,6 @@ export class TerminalDbManager {
   }
 
   public login(identifier: string, pass: string): { success: boolean; message: string; user?: User } {
-    // Allows admin or pre-configured accounts
     const id = identifier.trim().toLowerCase();
     if ((id === 'admin' || id === 'admin@terminal.id' || id === 'cahlosh22@gmail.com') && pass.length >= 4) {
       const user: User = {
@@ -677,7 +862,6 @@ export class TerminalDbManager {
       return { success: true, message: 'Login berhasil sebagai Quay Operator', user };
     }
 
-    // Generic test login for any username with password length >= 6
     if (pass.length >= 6) {
       const user: User = {
         id: 'usr-' + Date.now(),
@@ -711,7 +895,7 @@ export class TerminalDbManager {
 
   public async updateConfig(newConfig: Partial<DatabaseConfig>) {
     this.config = { ...this.config, ...newConfig, lastSyncTimestamp: new Date().toISOString() };
-    this.saveState();
+    this.saveLocalState();
   }
 
   public async testSupabaseConnection(url: string, key: string): Promise<{ success: boolean; message: string; pingMs?: number }> {
@@ -721,12 +905,10 @@ export class TerminalDbManager {
         return { success: false, message: 'Harap masukkan Project URL dan API Key Supabase.' };
       }
       const client = createClient(url, key);
-      // Ping check Supabase health endpoint or select test
       const { data, error } = await client.from('vessels').select('count', { count: 'exact', head: true });
       const elapsed = Math.round(performance.now() - start);
 
       if (error && error.code !== 'PGRST116' && !error.message.includes('relation') && !error.message.includes('does not exist')) {
-        // Even if table doesn't exist yet, if auth works it returns relation error which proves connection!
         return { success: false, message: `Koneksi gagal: ${error.message}` };
       }
 
@@ -738,7 +920,7 @@ export class TerminalDbManager {
         lastPingMs: elapsed,
       };
       this.config.activeProvider = 'supabase';
-      this.saveState();
+      this.saveLocalState();
       this.addLog('SYSTEM', `Terhubung ke Supabase (${url.replace(/https:\/\/(.*)\.supabase\.co.*/, '$1')}) - Latency: ${elapsed}ms`, 'System Admin', 'success');
       return { success: true, message: `Koneksi Supabase aktif! Ping respons: ${elapsed}ms. Skema siap disinkronkan.`, pingMs: elapsed };
     } catch (err: any) {
@@ -752,7 +934,6 @@ export class TerminalDbManager {
       if (!connectionString.includes('neon.tech') && !connectionString.includes('postgresql://')) {
         return { success: false, message: 'Format connection string PostgreSQL Neon harus diawali postgresql://...' };
       }
-      // Parse host for ping validation
       const matches = connectionString.match(/@([a-zA-Z0-9.\-_]+)\//);
       const host = matches ? matches[1] : 'ep-neon.tech';
       const elapsed = Math.round(performance.now() - start) + 42;
@@ -763,7 +944,7 @@ export class TerminalDbManager {
         lastPingMs: elapsed,
       };
       this.config.activeProvider = 'neon';
-      this.saveState();
+      this.saveLocalState();
       this.addLog('SYSTEM', `Terhubung ke Neon DB (${host}) - Latency: ${elapsed}ms`, 'System Admin', 'success');
       return { success: true, message: `Koneksi PostgreSQL Neon DB terverifikasi (${host}). Latensi: ${elapsed}ms`, pingMs: elapsed };
     } catch (err: any) {
@@ -783,10 +964,9 @@ export class TerminalDbManager {
         lastPingMs: elapsed,
       };
       this.config.activeProvider = 'firebase';
-      this.saveState();
+      this.saveLocalState();
 
       if (pingResult.success) {
-        // Asynchronously sync initial data
         this.syncToFirestore().catch((e) => console.warn('Background Firestore sync', e));
         this.addLog('SYSTEM', `Terhubung ke Firebase Firestore (${this.config.firebase.projectId}) - Latency: ${elapsed}ms`, 'System Admin', 'success');
       }
@@ -800,33 +980,36 @@ export class TerminalDbManager {
   public async syncToFirestore(): Promise<{ success: boolean; count: number }> {
     try {
       let count = 0;
-      // Sync vessels
       for (const v of this.vessels) {
         await setDoc(doc(firestoreDb, 'vessels', v.id), v, { merge: true });
         count++;
       }
-      // Sync berths
       for (const b of this.berths) {
         await setDoc(doc(firestoreDb, 'berths', b.id), b, { merge: true });
         count++;
       }
-      // Sync yardBlocks
       for (const y of this.yardBlocks) {
         await setDoc(doc(firestoreDb, 'yardBlocks', y.id), y, { merge: true });
         count++;
       }
-      // Sync schedules
       for (const s of this.schedules) {
         await setDoc(doc(firestoreDb, 'schedules', s.id), s, { merge: true });
         count++;
       }
-      // Sync containers
       for (const c of this.containers) {
         await setDoc(doc(firestoreDb, 'containers', c.id), c, { merge: true });
         count++;
       }
+      for (const g of this.gateTransactions) {
+        await setDoc(doc(firestoreDb, 'gateTransactions', g.id), g, { merge: true });
+        count++;
+      }
+      for (const l of this.logs) {
+        await setDoc(doc(firestoreDb, 'logs', l.id), l, { merge: true });
+        count++;
+      }
       this.config.lastSyncTimestamp = new Date().toISOString();
-      this.saveState();
+      this.saveLocalState();
       return { success: true, count };
     } catch (err) {
       console.warn('Firestore sync batch failed', err);
@@ -940,7 +1123,6 @@ CREATE TABLE IF NOT EXISTS tos_gate_transactions (
     notes TEXT
 );
 
--- Seed Indexes
 CREATE INDEX IF NOT EXISTS idx_cnt_number ON tos_containers(container_number);
 CREATE INDEX IF NOT EXISTS idx_sch_status ON tos_vessel_schedules(status);
 CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
@@ -963,8 +1145,9 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
       createdAt: new Date().toISOString(),
     };
     this.vessels.unshift(newVessel);
+    this.writeFirestoreDoc('vessels', newVessel.id, newVessel);
     this.addLog('VESSEL', `Master Kapal baru didaftarkan: ${newVessel.vesselName} (IMO: ${newVessel.imoNumber})`, this.currentUser?.fullName || 'Admin', 'success');
-    this.saveState();
+    this.saveLocalState();
     return newVessel;
   }
 
@@ -972,22 +1155,23 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     const idx = this.vessels.findIndex((v) => v.id === id);
     if (idx === -1) return null;
     this.vessels[idx] = { ...this.vessels[idx], ...updates };
+    this.writeFirestoreDoc('vessels', id, this.vessels[idx]);
     this.addLog('VESSEL', `Data kapal ${this.vessels[idx].vesselName} diperbarui`, this.currentUser?.fullName || 'Admin', 'info');
-    this.saveState();
+    this.saveLocalState();
     return this.vessels[idx];
   }
 
   public deleteVessel(id: string): boolean {
     const vessel = this.vessels.find((v) => v.id === id);
     if (!vessel) return false;
-    // Check if currently berthed
     const isBerthed = this.schedules.some((s) => s.vesselId === id && (s.status === 'BERTHED' || s.status === 'OPERATING'));
     if (isBerthed) {
       throw new Error(`Kapal ${vessel.vesselName} sedang aktif dalam operasi sandar dan tidak dapat dihapus.`);
     }
     this.vessels = this.vessels.filter((v) => v.id !== id);
+    this.deleteFirestoreDoc('vessels', id);
     this.addLog('VESSEL', `Kapal ${vessel.vesselName} dihapus dari Master Data`, this.currentUser?.fullName || 'Admin', 'warning');
-    this.saveState();
+    this.saveLocalState();
     return true;
   }
 
@@ -1002,8 +1186,9 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
       id: 'brt-' + Date.now().toString().slice(-4),
     };
     this.berths.push(newBerth);
+    this.writeFirestoreDoc('berths', newBerth.id, newBerth);
     this.addLog('VESSEL', `Dermaga baru ditambahkan: ${newBerth.code} - ${newBerth.name}`, this.currentUser?.fullName || 'Admin', 'success');
-    this.saveState();
+    this.saveLocalState();
     return newBerth;
   }
 
@@ -1011,7 +1196,8 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     const idx = this.berths.findIndex((b) => b.id === id);
     if (idx === -1) return null;
     this.berths[idx] = { ...this.berths[idx], ...updates };
-    this.saveState();
+    this.writeFirestoreDoc('berths', id, this.berths[idx]);
+    this.saveLocalState();
     return this.berths[idx];
   }
 
@@ -1022,8 +1208,9 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
       throw new Error(`Dermaga ${berth.code} sedang ditempati kapal dan tidak bisa dihapus.`);
     }
     this.berths = this.berths.filter((b) => b.id !== id);
+    this.deleteFirestoreDoc('berths', id);
     this.addLog('VESSEL', `Dermaga ${berth.code} dihapus`, this.currentUser?.fullName || 'Admin', 'warning');
-    this.saveState();
+    this.saveLocalState();
     return true;
   }
 
@@ -1039,8 +1226,9 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
       currentTeu: 0,
     };
     this.yardBlocks.push(newBlock);
+    this.writeFirestoreDoc('yardBlocks', newBlock.id, newBlock);
     this.addLog('YARD', `Blok Lapangan baru dibuat: ${newBlock.blockCode} (${newBlock.zoneType})`, this.currentUser?.fullName || 'Admin', 'success');
-    this.saveState();
+    this.saveLocalState();
     return newBlock;
   }
 
@@ -1048,7 +1236,8 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     const idx = this.yardBlocks.findIndex((b) => b.id === id);
     if (idx === -1) return null;
     this.yardBlocks[idx] = { ...this.yardBlocks[idx], ...updates };
-    this.saveState();
+    this.writeFirestoreDoc('yardBlocks', id, this.yardBlocks[idx]);
+    this.saveLocalState();
     return this.yardBlocks[idx];
   }
 
@@ -1059,8 +1248,9 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
       throw new Error(`Blok ${block.blockCode} masih berisi ${block.currentTeu} TEU kontainer. Harap kosongkan terlebih dahulu.`);
     }
     this.yardBlocks = this.yardBlocks.filter((b) => b.id !== id);
+    this.deleteFirestoreDoc('yardBlocks', id);
     this.addLog('YARD', `Blok ${block.blockCode} dihapus`, this.currentUser?.fullName || 'Admin', 'warning');
-    this.saveState();
+    this.saveLocalState();
     return true;
   }
 
@@ -1082,17 +1272,18 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     };
     this.schedules.unshift(newSchedule);
 
-    // If berthed immediately, mark berth as occupied
     if (newSchedule.status === 'BERTHED' || newSchedule.status === 'OPERATING') {
       const bIdx = this.berths.findIndex((b) => b.id === newSchedule.berthId);
       if (bIdx !== -1) {
         this.berths[bIdx].status = 'occupied';
         this.berths[bIdx].currentVesselId = newSchedule.vesselId;
+        this.writeFirestoreDoc('berths', this.berths[bIdx].id, this.berths[bIdx]);
       }
     }
 
+    this.writeFirestoreDoc('schedules', newSchedule.id, newSchedule);
     this.addLog('VESSEL', `Jadwal Sandar dibuat: ${newSchedule.voyageNumber} - ${newSchedule.vesselName} di ${newSchedule.berthCode}`, this.currentUser?.fullName || 'Admin', 'success');
-    this.saveState();
+    this.saveLocalState();
     return newSchedule;
   }
 
@@ -1103,40 +1294,43 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     const updated = { ...oldSchedule, ...updates };
     this.schedules[idx] = updated;
 
-    // Handle berth occupancy transitions
     if (updates.status && updates.status !== oldSchedule.status) {
       if (updates.status === 'BERTHED' || updates.status === 'OPERATING') {
         const bIdx = this.berths.findIndex((b) => b.id === updated.berthId);
         if (bIdx !== -1) {
           this.berths[bIdx].status = 'occupied';
           this.berths[bIdx].currentVesselId = updated.vesselId;
+          this.writeFirestoreDoc('berths', this.berths[bIdx].id, this.berths[bIdx]);
         }
       } else if (updates.status === 'COMPLETED') {
         const bIdx = this.berths.findIndex((b) => b.id === updated.berthId);
         if (bIdx !== -1 && this.berths[bIdx].currentVesselId === updated.vesselId) {
           this.berths[bIdx].status = 'available';
           this.berths[bIdx].currentVesselId = undefined;
+          this.writeFirestoreDoc('berths', this.berths[bIdx].id, this.berths[bIdx]);
         }
       }
       this.addLog('VESSEL', `Status Kapal ${updated.vesselName} berubah menjadi ${updated.status}`, this.currentUser?.fullName || 'Admin', 'info');
     }
 
-    this.saveState();
+    this.writeFirestoreDoc('schedules', id, updated);
+    this.saveLocalState();
     return updated;
   }
 
   public deleteSchedule(id: string): boolean {
     const sch = this.schedules.find((s) => s.id === id);
     if (!sch) return false;
-    // Release berth if held
     const bIdx = this.berths.findIndex((b) => b.id === sch.berthId);
     if (bIdx !== -1 && this.berths[bIdx].currentVesselId === sch.vesselId) {
       this.berths[bIdx].status = 'available';
       this.berths[bIdx].currentVesselId = undefined;
+      this.writeFirestoreDoc('berths', this.berths[bIdx].id, this.berths[bIdx]);
     }
     this.schedules = this.schedules.filter((s) => s.id !== id);
+    this.deleteFirestoreDoc('schedules', id);
     this.addLog('VESSEL', `Jadwal ${sch.voyageNumber} dihapus`, this.currentUser?.fullName || 'Admin', 'warning');
-    this.saveState();
+    this.saveLocalState();
     return true;
   }
 
@@ -1153,15 +1347,16 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     };
     this.containers.unshift(newContainer);
 
-    // Increase yard TEU count if placed in yard
     const teuAdd = newContainer.size >= 40 ? 2 : 1;
     const yIdx = this.yardBlocks.findIndex((y) => y.blockCode === newContainer.yardBlock);
     if (yIdx !== -1) {
       this.yardBlocks[yIdx].currentTeu = Math.min(this.yardBlocks[yIdx].capacityTeu, this.yardBlocks[yIdx].currentTeu + teuAdd);
+      this.writeFirestoreDoc('yardBlocks', this.yardBlocks[yIdx].id, this.yardBlocks[yIdx]);
     }
 
+    this.writeFirestoreDoc('containers', newContainer.id, newContainer);
     this.addLog('YARD', `Kontainer ${newContainer.containerNumber} (${newContainer.size}ft ${newContainer.type}) didaftarkan ke ${newContainer.yardBlock}`, this.currentUser?.fullName || 'Admin', 'success');
-    this.saveState();
+    this.saveLocalState();
     return newContainer;
   }
 
@@ -1172,21 +1367,23 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     const updated = { ...old, ...updates, updatedAt: new Date().toISOString() };
     this.containers[idx] = updated;
 
-    // If yard block changed
     if (updates.yardBlock && updates.yardBlock !== old.yardBlock) {
       const teu = updated.size >= 40 ? 2 : 1;
       const oldY = this.yardBlocks.findIndex((y) => y.blockCode === old.yardBlock);
       if (oldY !== -1) {
         this.yardBlocks[oldY].currentTeu = Math.max(0, this.yardBlocks[oldY].currentTeu - teu);
+        this.writeFirestoreDoc('yardBlocks', this.yardBlocks[oldY].id, this.yardBlocks[oldY]);
       }
       const newY = this.yardBlocks.findIndex((y) => y.blockCode === updates.yardBlock);
       if (newY !== -1) {
         this.yardBlocks[newY].currentTeu = Math.min(this.yardBlocks[newY].capacityTeu, this.yardBlocks[newY].currentTeu + teu);
+        this.writeFirestoreDoc('yardBlocks', this.yardBlocks[newY].id, this.yardBlocks[newY]);
       }
       this.addLog('YARD', `Relokasi kontainer ${updated.containerNumber} dari ${old.yardBlock} ke ${updates.yardBlock} (Bay:${updated.yardBay}, Row:${updated.yardRow}, Tier:${updated.yardTier})`, this.currentUser?.fullName || 'Admin', 'info');
     }
 
-    this.saveState();
+    this.writeFirestoreDoc('containers', id, updated);
+    this.saveLocalState();
     return updated;
   }
 
@@ -1197,10 +1394,12 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     const yIdx = this.yardBlocks.findIndex((y) => y.blockCode === c.yardBlock);
     if (yIdx !== -1) {
       this.yardBlocks[yIdx].currentTeu = Math.max(0, this.yardBlocks[yIdx].currentTeu - teu);
+      this.writeFirestoreDoc('yardBlocks', this.yardBlocks[yIdx].id, this.yardBlocks[yIdx]);
     }
     this.containers = this.containers.filter((item) => item.id !== id);
+    this.deleteFirestoreDoc('containers', id);
     this.addLog('YARD', `Kontainer ${c.containerNumber} dihapus dari sistem`, this.currentUser?.fullName || 'Admin', 'warning');
-    this.saveState();
+    this.saveLocalState();
     return true;
   }
 
@@ -1221,15 +1420,16 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     };
     this.gateTransactions.unshift(newTrans);
 
-    // Update container status if exists
     const cIdx = this.containers.findIndex((c) => c.containerNumber === trans.containerNumber);
     if (cIdx !== -1) {
       this.containers[cIdx].status = trans.type === 'GATE_IN' ? 'GATE_IN' : 'GATE_OUT';
       this.containers[cIdx].updatedAt = new Date().toISOString();
+      this.writeFirestoreDoc('containers', this.containers[cIdx].id, this.containers[cIdx]);
     }
 
+    this.writeFirestoreDoc('gateTransactions', newTrans.id, newTrans);
     this.addLog('GATE', `Transaksi ${newTrans.type} berhasil untuk truk ${newTrans.truckPlateNumber} / Kontainer ${newTrans.containerNumber} (EIR: ${newTrans.eirNumber})`, this.currentUser?.fullName || 'Admin', 'success');
-    this.saveState();
+    this.saveLocalState();
     return newTrans;
   }
 
@@ -1248,14 +1448,15 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
 
     if (!hasDischargeRemaining && !hasLoadRemaining) {
       activeSchedule.status = 'COMPLETED';
-      // Release berth
       const bIdx = this.berths.findIndex((b) => b.id === activeSchedule.berthId);
       if (bIdx !== -1 && this.berths[bIdx].currentVesselId === activeSchedule.vesselId) {
         this.berths[bIdx].status = 'available';
         this.berths[bIdx].currentVesselId = undefined;
+        this.writeFirestoreDoc('berths', this.berths[bIdx].id, this.berths[bIdx]);
       }
+      this.writeFirestoreDoc('schedules', activeSchedule.id, activeSchedule);
       this.addLog('VESSEL', `Bongkar muat ${activeSchedule.vesselName} (Voyage ${activeSchedule.voyageNumber}) telah selesai 100%.`, 'Terminal Superintendent', 'success');
-      this.saveState();
+      this.saveLocalState();
       return null;
     }
 
@@ -1267,14 +1468,14 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
       activeSchedule.completedLoadTeu += 1;
     }
 
-    // Update dynamic BSH (Box Ship Hour)
     activeSchedule.bshRate = +(25 + Math.random() * 8 + cranes.length * 18).toFixed(1);
     activeSchedule.bchRate = +(activeSchedule.bshRate / Math.max(1, cranes.length)).toFixed(1);
 
     const contNum = 'CT' + Math.floor(1000000 + Math.random() * 9000000);
+    this.writeFirestoreDoc('schedules', activeSchedule.id, activeSchedule);
     this.addLog('CRANE', `Crane ${crane} sukses ${op} Box #${contNum} pada ${activeSchedule.vesselName}`, `Operator ${crane}`, 'info');
 
-    this.saveState();
+    this.saveLocalState();
     return {
       liftedContainer: contNum,
       crane,
@@ -1299,9 +1500,9 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     };
     this.logs.unshift(log);
     if (this.logs.length > 50) this.logs.pop();
+    this.writeFirestoreDoc('logs', log.id, log);
   }
 
-  // Reset to initial demo dataset
   public resetToDefault() {
     this.vessels = [...initialVessels];
     this.berths = [...initialBerths];
@@ -1310,7 +1511,8 @@ CREATE INDEX IF NOT EXISTS idx_gate_time ON tos_gate_transactions(timestamp);
     this.containers = [...initialContainers];
     this.gateTransactions = [...initialGateTransactions];
     this.logs = [...initialLogs];
-    this.saveState();
+    this.saveLocalState();
+    this.syncToFirestore().catch((e) => console.warn('Reset Firestore sync error', e));
   }
 }
 
