@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default fallback deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    match /vessels/{vesselId} {
+      allow read: if true;
+      allow write: if isValidId(vesselId);
+    }
+
+    match /berths/{berthId} {
+      allow read: if true;
+      allow write: if isValidId(berthId);
+    }
+
+    match /yardBlocks/{yardBlockId} {
+      allow read: if true;
+      allow write: if isValidId(yardBlockId);
+    }
+
+    match /schedules/{scheduleId} {
+      allow read: if true;
+      allow write: if isValidId(scheduleId);
+    }
+
+    match /containers/{containerId} {
+      allow read: if true;
+      allow write: if isValidId(containerId);
+    }
+
+    match /gateTransactions/{transactionId} {
+      allow read: if true;
+      allow write: if isValidId(transactionId);
+    }
+
+    match /logs/{logId} {
+      allow read: if true;
+      allow create: if isValidId(logId);
+      allow update, delete: if false;
+    }
+  }
+}

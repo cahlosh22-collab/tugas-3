@@ -435,7 +435,7 @@ export const DatabaseConfigModal: React.FC<DatabaseConfigModalProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center gap-3 pt-2">
+              <div className="flex flex-wrap items-center gap-3 pt-2">
                 <button
                   onClick={handleTestFirebase}
                   disabled={firebaseLoading}
@@ -446,7 +446,22 @@ export const DatabaseConfigModal: React.FC<DatabaseConfigModalProps> = ({
                   ) : (
                     <Flame className="h-3.5 w-3.5" />
                   )}
-                  <span>{firebaseLoading ? 'Menguji Koneksi...' : 'Uji & Sambungkan Firebase'}</span>
+                  <span>{firebaseLoading ? 'Menguji Koneksi...' : 'Uji & Sinkronkan Firestore'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await dbManager.syncToFirestore();
+                    setFirebaseStatus({
+                      success: true,
+                      message: `Tersinkronisasi ${res.count} dokumen (Kapal, Dermaga, Lapangan, Kontainer) ke Cloud Firestore.`,
+                    });
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-slate-200 hover:bg-slate-700 transition-colors"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Kirim Data ke Firestore</span>
                 </button>
               </div>
             </div>

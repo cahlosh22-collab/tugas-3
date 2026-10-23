@@ -1,0 +1,166 @@
+{
+  "entities": {
+    "Vessel": {
+      "title": "Vessel",
+      "description": "Master data kapal peti kemas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "imoNumber": { "type": "string", "maxLength": 32 },
+        "vesselName": { "type": "string", "maxLength": 128 },
+        "callSign": { "type": "string", "maxLength": 32 },
+        "flag": { "type": "string", "maxLength": 64 },
+        "loaMeters": { "type": "number" },
+        "beamMeters": { "type": "number" },
+        "draftMeters": { "type": "number" },
+        "teuCapacity": { "type": "number" },
+        "shippingLine": { "type": "string", "maxLength": 128 },
+        "yearBuilt": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "imoNumber", "vesselName", "shippingLine", "teuCapacity"]
+    },
+    "Berth": {
+      "title": "Berth",
+      "description": "Master data dermaga sandar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string", "maxLength": 32 },
+        "name": { "type": "string", "maxLength": 128 },
+        "lengthMeters": { "type": "number" },
+        "maxDepthMeters": { "type": "number" },
+        "craneCount": { "type": "number" },
+        "currentVesselId": { "type": "string" },
+        "status": { "type": "string", "enum": ["available", "occupied", "maintenance"] }
+      },
+      "required": ["id", "code", "name", "lengthMeters", "status"]
+    },
+    "YardBlock": {
+      "title": "YardBlock",
+      "description": "Master data blok lapangan penumpukan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "blockCode": { "type": "string", "maxLength": 32 },
+        "name": { "type": "string", "maxLength": 128 },
+        "zoneType": { "type": "string", "enum": ["DRY", "REEFER", "HAZARDOUS", "EMPTY"] },
+        "totalBays": { "type": "number" },
+        "totalRows": { "type": "number" },
+        "totalTiers": { "type": "number" },
+        "capacityTeu": { "type": "number" },
+        "currentTeu": { "type": "number" }
+      },
+      "required": ["id", "blockCode", "zoneType", "capacityTeu"]
+    },
+    "VesselSchedule": {
+      "title": "VesselSchedule",
+      "description": "Transaksi jadwal dan operasi sandar kapal",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "voyageNumber": { "type": "string", "maxLength": 64 },
+        "vesselId": { "type": "string" },
+        "vesselName": { "type": "string", "maxLength": 128 },
+        "shippingLine": { "type": "string", "maxLength": 128 },
+        "berthId": { "type": "string" },
+        "berthCode": { "type": "string", "maxLength": 32 },
+        "eta": { "type": "string" },
+        "etb": { "type": "string" },
+        "etd": { "type": "string" },
+        "status": { "type": "string", "enum": ["SCHEDULED", "APPROACHING", "BERTHED", "OPERATING", "COMPLETED"] },
+        "dischargeTeu": { "type": "number" },
+        "loadTeu": { "type": "number" },
+        "completedDischargeTeu": { "type": "number" },
+        "completedLoadTeu": { "type": "number" },
+        "bshRate": { "type": "number" },
+        "bchRate": { "type": "number" }
+      },
+      "required": ["id", "voyageNumber", "vesselName", "berthCode", "status"]
+    },
+    "Container": {
+      "title": "Container",
+      "description": "Inventaris dan posisi kontainer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "containerNumber": { "type": "string", "maxLength": 32 },
+        "isoCode": { "type": "string", "maxLength": 16 },
+        "size": { "type": "number" },
+        "type": { "type": "string" },
+        "weightGrossKg": { "type": "number" },
+        "tareWeightKg": { "type": "number" },
+        "sealNumber": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string" },
+        "yardBlock": { "type": "string", "maxLength": 32 },
+        "yardBay": { "type": "number" },
+        "yardRow": { "type": "number" },
+        "yardTier": { "type": "number" },
+        "consignee": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "containerNumber", "size", "status", "yardBlock"]
+    },
+    "GateTransaction": {
+      "title": "GateTransaction",
+      "description": "Transaksi gerbang dan EIR peti kemas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "transactionNumber": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "enum": ["GATE_IN", "GATE_OUT"] },
+        "timestamp": { "type": "string" },
+        "truckPlateNumber": { "type": "string", "maxLength": 32 },
+        "driverName": { "type": "string", "maxLength": 128 },
+        "containerNumber": { "type": "string", "maxLength": 32 },
+        "eirNumber": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string" },
+        "weightKg": { "type": "number" }
+      },
+      "required": ["id", "transactionNumber", "type", "containerNumber", "eirNumber"]
+    },
+    "OperationalLog": {
+      "title": "OperationalLog",
+      "description": "Log aktivitas operasional terminal",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string", "maxLength": 500 },
+        "actor": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "category", "description"]
+    }
+  },
+  "firestore": {
+    "/vessels/{vesselId}": {
+      "schema": { "$ref": "#/entities/Vessel" },
+      "description": "Koleksi data master kapal peti kemas"
+    },
+    "/berths/{berthId}": {
+      "schema": { "$ref": "#/entities/Berth" },
+      "description": "Koleksi data master dermaga"
+    },
+    "/yardBlocks/{yardBlockId}": {
+      "schema": { "$ref": "#/entities/YardBlock" },
+      "description": "Koleksi data blok lapangan penumpukan"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": { "$ref": "#/entities/VesselSchedule" },
+      "description": "Koleksi jadwal kedatangan dan operasi sandar"
+    },
+    "/containers/{containerId}": {
+      "schema": { "$ref": "#/entities/Container" },
+      "description": "Koleksi inventaris peti kemas di terminal"
+    },
+    "/gateTransactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/GateTransaction" },
+      "description": "Koleksi transaksi gate in dan gate out"
+    },
+    "/logs/{logId}": {
+      "schema": { "$ref": "#/entities/OperationalLog" },
+      "description": "Koleksi log operasional real-time terminal"
+    }
+  }
+}

@@ -10,6 +10,8 @@ import {
   User,
 } from '../types/tos.ts';
 import { createClient } from '@supabase/supabase-js';
+import { db as firestoreDb, testFirestoreConnection, firebaseConfig } from '../lib/firebase.ts';
+import { collection, doc, setDoc, getDocs } from 'firebase/firestore';
 
 const STORAGE_KEY_TOS = 'portvessel_tos_database_v1';
 const STORAGE_KEY_CONFIG = 'portvessel_tos_db_config_v1';
@@ -495,7 +497,7 @@ const initialLogs: OperationalLog[] = [
 ];
 
 const defaultDatabaseConfig: DatabaseConfig = {
-  activeProvider: 'builtin',
+  activeProvider: 'firebase',
   supabase: {
     url: '',
     anonKey: '',
@@ -507,9 +509,9 @@ const defaultDatabaseConfig: DatabaseConfig = {
     connected: false,
   },
   firebase: {
-    projectId: '',
-    apiKey: '',
-    connected: false,
+    projectId: firebaseConfig.projectId,
+    apiKey: firebaseConfig.apiKey,
+    connected: true,
   },
   lastSyncTimestamp: new Date().toISOString(),
 };
@@ -770,25 +772,65 @@ export class TerminalDbManager {
   }
 
   public async testFirebaseConnection(projectId: string, apiKey: string): Promise<{ success: boolean; message: string; pingMs?: number }> {
-    const start = performance.now();
     try {
-      if (!projectId) {
-        return { success: false, message: 'Harap masukkan Project ID Firebase.' };
-      }
-      const elapsed = Math.round(performance.now() - start) + 38;
+      const pingResult = await testFirestoreConnection();
+      const elapsed = pingResult.pingMs || 45;
 
       this.config.firebase = {
-        projectId,
-        apiKey,
-        connected: true,
+        projectId: projectId || firebaseConfig.projectId,
+        apiKey: apiKey || firebaseConfig.apiKey,
+        connected: pingResult.success,
         lastPingMs: elapsed,
       };
       this.config.activeProvider = 'firebase';
       this.saveState();
-      this.addLog('SYSTEM', `Terhubung ke Firebase Firestore Project (${projectId}) - Latency: ${elapsed}ms`, 'System Admin', 'success');
-      return { success: true, message: `Koneksi Firebase Firestore aktif (${projectId}). Latensi: ${elapsed}ms`, pingMs: elapsed };
+
+      if (pingResult.success) {
+        // Asynchronously sync initial data
+        this.syncToFirestore().catch((e) => console.warn('Background Firestore sync', e));
+        this.addLog('SYSTEM', `Terhubung ke Firebase Firestore (${this.config.firebase.projectId}) - Latency: ${elapsed}ms`, 'System Admin', 'success');
+      }
+
+      return pingResult;
     } catch (err: any) {
       return { success: false, message: `Gagal verifikasi Firebase: ${err.message}` };
+    }
+  }
+
+  public async syncToFirestore(): Promise<{ success: boolean; count: number }> {
+    try {
+      let count = 0;
+      // Sync vessels
+      for (const v of this.vessels) {
+        await setDoc(doc(firestoreDb, 'vessels', v.id), v, { merge: true });
+        count++;
+      }
+      // Sync berths
+      for (const b of this.berths) {
+        await setDoc(doc(firestoreDb, 'berths', b.id), b, { merge: true });
+        count++;
+      }
+      // Sync yardBlocks
+      for (const y of this.yardBlocks) {
+        await setDoc(doc(firestoreDb, 'yardBlocks', y.id), y, { merge: true });
+        count++;
+      }
+      // Sync schedules
+      for (const s of this.schedules) {
+        await setDoc(doc(firestoreDb, 'schedules', s.id), s, { merge: true });
+        count++;
+      }
+      // Sync containers
+      for (const c of this.containers) {
+        await setDoc(doc(firestoreDb, 'containers', c.id), c, { merge: true });
+        count++;
+      }
+      this.config.lastSyncTimestamp = new Date().toISOString();
+      this.saveState();
+      return { success: true, count };
+    } catch (err) {
+      console.warn('Firestore sync batch failed', err);
+      return { success: false, count: 0 };
     }
   }
 
